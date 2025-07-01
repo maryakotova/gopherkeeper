@@ -1,0 +1,8 @@
+curl -v -X POST 'http://localhost:8080'
+curl -v -X POST 'http://localhost:8080/update/'
+curl -v -X POST 'http://localhost:8080/update/counter/someMetric/527'
+curl -v -X POST 'http://localhost:8080/update/counter/someMetric/527.11'
+curl -v -X POST 'http://localhost:8080/update/gauge/someMetric/527.11'
+curl -v -X POST 'http://localhost:8080/update/gauge/someMetric/abc'
+curl -v -X POST 'http://localhost:8080/update/abc/someMetric/abc'
+curl -v -X POST 'http://localhost:8080/update//someMetric/abc'
