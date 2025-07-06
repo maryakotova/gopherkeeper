@@ -220,7 +220,7 @@ func (s *PostgresStorage) DeleteData(ctx context.Context, fileID uuid.UUID, user
 	defer tx.Rollback()
 
 	deleteQuery := `
-		DELETE files
+		DELETE FROM files
 		WHERE id = $1
 		AND user_id = $2;
 	`
@@ -249,7 +249,7 @@ func (s *PostgresStorage) GetUpdatedSince(ctx context.Context, userID int, lastU
 	defer tx.Rollback()
 
 	selectQuery := `
-		SELECT id, name, meta, content
+		SELECT f.id, name, meta, created_at, updated_at, content
 			FROM files f
 			INNER JOIN content c 
 				ON f.id = c.id
@@ -263,10 +263,11 @@ func (s *PostgresStorage) GetUpdatedSince(ctx context.Context, userID int, lastU
 	if err != nil {
 		return
 	}
+	defer rows.Close()
 
 	for rows.Next() {
 		var row models.SyncData
-		err = rows.Scan(&row.FileID, &row.FileName, &row.Metadata, row.Content)
+		err = rows.Scan(&row.FileID, &row.FileName, &row.Metadata, &row.CreatedAt, &row.UpdatedAt, &row.Content)
 		if err != nil {
 			err = fmt.Errorf("ошибка при считывании строки: %w", err)
 			return

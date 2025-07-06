@@ -213,6 +213,42 @@ func (c *Client) GetFile(ctx context.Context, id uuid.UUID) (err error) {
 
 }
 
+func (c *Client) Sync(ctx context.Context) (err error) {
+
+	newLastSync := time.Now()
+
+	if c.repo == nil {
+		return fmt.Errorf("подключение к БД не установлено")
+	}
+
+	lastSync := c.repo.GetLastSync(ctx)
+
+	resp, err := c.sendSyncRequest(ctx, lastSync)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	switch resp.StatusCode {
+	case http.StatusNoContent:
+		fmt.Println("✅ Нечего синхронизировать — сервер не вернул данных")
+		return nil
+	case http.StatusOK:
+		// продолжаем
+	default:
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("сервер вернул ошибку: %s", string(body))
+	}
+
+	err = c.processMultipartResponse(ctx, resp)
+	if err != nil {
+		return err
+	}
+
+	return c.repo.UpdateLastSync(ctx, newLastSync)
+
+}
+
 // Загрузка и подготовка файла
 func readAndPrepareFile(filePath string) (file *os.File, fileData []byte, fileName string, err error) {
 
@@ -388,6 +424,7 @@ func (c *Client) updateFileInRepo(ctx context.Context, id uuid.UUID, data []byte
 	return nil
 }
 
+// Извлечение границу (boundary) из заголовка Content-Type
 func boundaryFromContentType(contentType string) string {
 	_, params, err := mime.ParseMediaType(contentType)
 	if err != nil {
@@ -396,7 +433,7 @@ func boundaryFromContentType(contentType string) string {
 	return params["boundary"]
 }
 
-// Извлечение границу (boundary) из заголовка Content-Type
+// Отправка Get запроса и обработка ответа
 func (c *Client) sendDownloadRequest(ctx context.Context, token string, id uuid.UUID) (*http.Response, error) {
 	url := fmt.Sprintf("http://%s/data/download/%s", c.serverAddr, id.String())
 
@@ -423,7 +460,8 @@ func (c *Client) sendDownloadRequest(ctx context.Context, token string, id uuid.
 // Парсинг multipart ответа для Get
 func parseMultipartResponse(resp *http.Response) ([]byte, string, string, time.Time, error) {
 	contentType := resp.Header.Get("Content-Type")
-	mr := multipart.NewReader(resp.Body, boundaryFromContentType(contentType))
+	boundary := boundaryFromContentType(contentType)
+	mr := multipart.NewReader(resp.Body, boundary)
 
 	var (
 		fileData  []byte
@@ -457,18 +495,108 @@ func parseMultipartResponse(resp *http.Response) ([]byte, string, string, time.T
 			meta = string(metaBytes)
 
 		case "updated_at":
-			updatedAt = time.Now()
-			// dateBytes, err := io.ReadAll(part)
-			// if err != nil {
-			// 	return nil, "", "", time.Time{}, fmt.Errorf("ошибка чтения даты обновления: %w", err)
-			// }
-			// layout := "2006-01-02 15:04:05.999999999 -0700 MST"
-			// updatedAt, err = time.Parse(layout, string(dateBytes))
-			// if err != nil {
-			// 	return nil, "", "", time.Time{}, err
-			// }
+			dateBytes, err := io.ReadAll(part)
+			if err != nil {
+				return nil, "", "", time.Time{}, fmt.Errorf("ошибка чтения даты обновления: %w", err)
+			}
+			updatedAt, err = time.Parse(time.RFC3339Nano, string(dateBytes))
+			if err != nil {
+				return nil, "", "", time.Time{}, err
+			}
 		}
 	}
 
 	return fileData, fileName, meta, updatedAt, nil
+}
+
+// Отправка Sync запроса
+func (c *Client) sendSyncRequest(ctx context.Context, lastSync time.Time) (*http.Response, error) {
+	token, err := contextutils.LoadTokenFromFile(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	url := fmt.Sprintf("http://%s/data/sync/%s", c.serverAddr, lastSync.Format(time.RFC3339Nano))
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("ошибка создания запроса: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("ошибка запроса: %w", err)
+	}
+
+	return resp, nil
+}
+
+// Обработка multipart-ответа
+func (c *Client) processMultipartResponse(ctx context.Context, resp *http.Response) error {
+	contentType := resp.Header.Get("Content-Type")
+	boundary := boundaryFromContentType(contentType)
+	if boundary == "" {
+		return fmt.Errorf("не удалось определить boundary из Content-Type: %s", contentType)
+	}
+
+	mr := multipart.NewReader(resp.Body, boundary)
+
+	for {
+		part, err := mr.NextPart()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("ошибка чтения multipart части: %w", err)
+		}
+
+		err = c.handlePart(ctx, part)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// Обработка одной multipart части
+func (c *Client) handlePart(ctx context.Context, part *multipart.Part) error {
+	cd := part.Header.Get("Content-Disposition")
+	_, params, err := mime.ParseMediaType(cd)
+	if err != nil {
+		return fmt.Errorf("ошибка парсинга Content-Disposition: %w", err)
+	}
+	fileName := params["filename"]
+
+	meta := part.Header.Get("meta")
+	updatedAtStr := part.Header.Get("updated_at")
+	createdAtStr := part.Header.Get("created_at")
+	fileIDStr := part.Header.Get("file_id")
+
+	updatedAt, err := time.Parse(time.RFC3339Nano, updatedAtStr)
+	if err != nil {
+		return fmt.Errorf("неверный формат времени обновления для файла %s", fileName)
+	}
+	createdAt, err := time.Parse(time.RFC3339Nano, createdAtStr)
+	if err != nil {
+		return fmt.Errorf("неверный формат времени создания для файла %s", fileName)
+	}
+	fileID, err := uuid.Parse(fileIDStr)
+	if err != nil {
+		return fmt.Errorf("ошибка при преобразовании ID для файла %s: %w", fileName, err)
+	}
+
+	content, err := io.ReadAll(part)
+	if err != nil {
+		return fmt.Errorf("ошибка чтения содержимого файла: %w", err)
+	}
+
+	err = c.repo.SaveOrUpdate(ctx, fileID, fileName, content, meta, createdAt, updatedAt)
+	if err != nil {
+		return fmt.Errorf("ошибка сохранения файла %s в локальное хранилище: %w", fileName, err)
+	}
+
+	fmt.Printf("✅ Синхронизирован файл: %s\n", fileName)
+	return nil
 }

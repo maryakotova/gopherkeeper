@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -25,9 +26,17 @@ func AuthMiddleware() gin.HandlerFunc {
 		auth := c.GetHeader("Authorization")
 		tokenStr := strings.TrimPrefix(auth, "Bearer ")
 
-		token, _ := jwt.Parse(tokenStr, func(token *jwt.Token) (interface{}, error) {
+		token, err := jwt.Parse(tokenStr, func(token *jwt.Token) (interface{}, error) {
+			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+				return nil, fmt.Errorf("неподдерживаемый метод подписи: %v", token.Header["alg"])
+			}
 			return secret, nil
 		})
+		if err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "невалидный токен"})
+			c.Abort()
+			return
+		}
 
 		if claims, ok := token.Claims.(jwt.MapClaims); ok && token.Valid {
 			c.Set("user_id", int(claims["user_id"].(float64)))
@@ -38,43 +47,3 @@ func AuthMiddleware() gin.HandlerFunc {
 		}
 	}
 }
-
-// type AuthMiddleware struct {
-// 	secret []byte
-// }
-
-// func NewAuthMiddleware(secret string) *AuthMiddleware {
-// 	return &AuthMiddleware{
-// 		secret: []byte(secret),
-// 	}
-// }
-
-// // // var secret = "GopherKeeper_Secret" //[]byte(os.Getenv("JWT_SECRET"))
-
-// func (auth *AuthMiddleware) GenerateJWT(userID uint) (string, error) {
-// 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-// 		"user_id": userID,
-// 		"exp":     time.Now().Add(24 * time.Hour).Unix(),
-// 	})
-
-// 	return token.SignedString(auth.secret)
-// }
-
-// func (auth *AuthMiddleware) AuthMiddleware() gin.HandlerFunc {
-// 	return func(c *gin.Context) {
-// 		auth := c.GetHeader("Authorization")
-// 		tokenStr := strings.TrimPrefix(auth, "Bearer ")
-
-// 		token, _ := jwt.Parse(tokenStr, func(token *jwt.Token) (interface{}, error) {
-// 			return auth.secret, nil
-// 		})
-
-// 		if claims, ok := token.Claims.(jwt.MapClaims); ok && token.Valid {
-// 			c.Set("user_id", uint(claims["user_id"].(float64)))
-// 			c.Next()
-// 		} else {
-// 			c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
-// 			c.Abort()
-// 		}
-// 	}
-// }

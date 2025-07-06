@@ -1,6 +1,10 @@
 package models
 
-import "github.com/google/uuid"
+import (
+	"time"
+
+	"github.com/google/uuid"
+)
 
 type RegisterRequest struct {
 	Username string `json:"username"`
@@ -14,8 +18,10 @@ type RegisterRequest struct {
 // }
 
 type SyncData struct {
-	FileID   uuid.UUID
-	FileName string
-	Metadata string
-	Content  []byte
+	FileID    uuid.UUID
+	FileName  string
+	Metadata  string
+	CreatedAt time.Time
+	UpdatedAt time.Time
+	Content   []byte
 }

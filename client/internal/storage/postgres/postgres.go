@@ -49,6 +49,7 @@ func (s *PostgresStorage) Bootstrap(ctx context.Context) error {
 		created_at  TIMESTAMP NOT NULL,
 		updated_at  TIMESTAMP
 	);
+	CREATE INDEX IF NOT EXISTS files_id_server ON files(id_server);
 	`
 	_, err = tx.ExecContext(ctx, query)
 	if err != nil {
@@ -77,7 +78,7 @@ func (s *PostgresStorage) Close() error {
 	return s.db.Close()
 }
 
-func (s *PostgresStorage) InsertFile(ctx context.Context, data []byte, fileName string, metadata string, id_server uuid.UUID, created_at time.Time) (id uuid.UUID, err error) {
+func (s *PostgresStorage) InsertFile(ctx context.Context, data []byte, fileName string, metadata string, id_server uuid.UUID, createdAt time.Time) (id uuid.UUID, err error) {
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -92,7 +93,7 @@ func (s *PostgresStorage) InsertFile(ctx context.Context, data []byte, fileName 
 	`
 
 	s.mtx.Lock()
-	err = tx.QueryRowContext(ctx, insertFileQuery, id_server, fileName, metadata, data, created_at, created_at).Scan(&id)
+	err = tx.QueryRowContext(ctx, insertFileQuery, id_server, fileName, metadata, data, createdAt, createdAt).Scan(&id)
 	s.mtx.Unlock()
 
 	if err != nil {
@@ -107,36 +108,7 @@ func (s *PostgresStorage) InsertFile(ctx context.Context, data []byte, fileName 
 	return
 }
 
-// func (s *PostgresStorage) UpdateIDServer(ctx context.Context, id uuid.UUID, id_server uuid.UUID) error {
-
-// 	tx, err := s.db.BeginTx(ctx, nil)
-// 	if err != nil {
-// 		return err
-// 	}
-// 	defer tx.Rollback()
-
-// 	updateFileQuery := `
-// 	UPDATE files
-// 			SET id_server = $1
-// 			WHERE id = $2;
-// 	`
-// 	s.mtx.Lock()
-// 	_, err = tx.ExecContext(ctx, updateFileQuery, id, id_server)
-// 	s.mtx.Unlock()
-
-// 	if err != nil {
-// 		return err
-// 	}
-
-// 	if err = tx.Commit(); err != nil {
-// 		err = fmt.Errorf("error updating tables: %w", err)
-// 		return err
-// 	}
-
-// 	return nil
-// }
-
-func (s *PostgresStorage) UpdateFile(ctx context.Context, id uuid.UUID, data []byte, fileName string, metadata string, updated_at time.Time) error {
+func (s *PostgresStorage) UpdateFile(ctx context.Context, id uuid.UUID, data []byte, fileName string, metadata string, updatedAt time.Time) error {
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -150,7 +122,7 @@ func (s *PostgresStorage) UpdateFile(ctx context.Context, id uuid.UUID, data []b
 			WHERE id = $5;
 	`
 	s.mtx.Lock()
-	_, err = tx.ExecContext(ctx, updateFileQuery, fileName, metadata, data, updated_at, id)
+	_, err = tx.ExecContext(ctx, updateFileQuery, fileName, metadata, data, updatedAt, id)
 	s.mtx.Unlock()
 
 	if err != nil {
@@ -187,8 +159,8 @@ func (s *PostgresStorage) GetLastSync(ctx context.Context) time.Time {
 
 	query := `
 		SELECT value 
-			FROM key_date 
-			WHERE id = $1;
+			FROM key_timestamps 
+			WHERE key = $1;
 	`
 	s.mtx.Lock()
 	err := s.db.QueryRowContext(ctx, query, lastSyncKey).Scan(&timestamp)
@@ -201,9 +173,7 @@ func (s *PostgresStorage) GetLastSync(ctx context.Context) time.Time {
 
 }
 
-func (s *PostgresStorage) UpdateLastSync(ctx context.Context, lastSymc time.Time) time.Time {
-
-	var timestamp time.Time
+func (s *PostgresStorage) UpdateLastSync(ctx context.Context, lastSync time.Time) error {
 
 	query := `
 		INSERT INTO key_timestamps (key, value)
@@ -213,12 +183,55 @@ func (s *PostgresStorage) UpdateLastSync(ctx context.Context, lastSymc time.Time
 				value = EXCLUDED.value;
 	`
 	s.mtx.Lock()
-	_, err := s.db.ExecContext(ctx, query, lastSyncKey, lastSymc)
+	_, err := s.db.ExecContext(ctx, query, lastSyncKey, lastSync)
 	s.mtx.Unlock()
 
 	if err != nil {
-		return timestamp
+		return fmt.Errorf("не удалось обновить дату последней синхронизации: %w", err)
 	}
-	return timestamp
+	return nil
 
+}
+
+func (s *PostgresStorage) SaveOrUpdate(ctx context.Context, id_server uuid.UUID, fileName string, content []byte, meta string, createdAt time.Time, updatedAt time.Time) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("начало транзакции: %w", err)
+	}
+	defer tx.Rollback()
+
+	var id uuid.UUID
+
+	queryExists := `
+		SELECT id 
+			FROM files 
+			WHERE id_server = $1; 
+	`
+
+	err = tx.QueryRowContext(ctx, queryExists, id_server).Scan(&id)
+
+	if err == nil && id != uuid.Nil {
+		queryUpdate := `
+			UPDATE files 
+				SET name = $1, meta = $2, content = $3, created_at = $4, updated_at = $5
+				WHERE id = $6;
+		`
+		_, err = tx.ExecContext(ctx, queryUpdate, fileName, meta, content, createdAt, updatedAt, id)
+		if err != nil {
+			return fmt.Errorf("ошибка при обновлении файла: %w", err)
+		}
+	} else if err == sql.ErrNoRows {
+		queryInsert := `
+			INSERT INTO files (id_server, name, meta, content, created_at, updated_at)
+				VALUES ($1, $2, $3, $4, $5, $6);
+		`
+		_, err = tx.ExecContext(ctx, queryInsert, id_server, fileName, meta, content, createdAt, updatedAt)
+		if err != nil {
+			return fmt.Errorf("ошибка при вставке файла: %w", err)
+		}
+	} else {
+		return fmt.Errorf("ошибка выборки: %w", err)
+	}
+
+	return tx.Commit()
 }

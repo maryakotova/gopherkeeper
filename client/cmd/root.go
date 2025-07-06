@@ -7,8 +7,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// var Config config.Config
-
 var rootCmd = &cobra.Command{
 	Use:   "gophkeeper",
 	Short: "CLI клиент для GophKeeper",
