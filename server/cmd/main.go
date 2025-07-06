@@ -32,7 +32,7 @@ func run() error {
 	}
 
 	defer func() {
-		err = repo.CLose()
+		err = repo.Close()
 		if err != nil {
 			log.Printf("Ошибка при закрытии соединения БД: %v", err)
 		}

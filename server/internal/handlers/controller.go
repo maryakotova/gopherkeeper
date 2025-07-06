@@ -35,17 +35,6 @@ func (h *ControllerHandler) UploadHandler(c *gin.Context) {
 	var createdAt time.Time
 	var err error
 
-	createdAtStr := c.GetHeader("X-Created-At")
-	if createdAtStr == "" {
-		createdAt = time.Now()
-	} else {
-		createdAt, err = h.parseTime(createdAtStr)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "incorrect time format"})
-			return
-		}
-	}
-
 	file, fileHeader, err := c.Request.FormFile("file")
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "file is required"})
@@ -69,6 +58,17 @@ func (h *ControllerHandler) UploadHandler(c *gin.Context) {
 		return
 	}
 
+	createdAtStr := c.PostForm("created_at")
+	if createdAtStr == "" {
+		createdAt = time.Now()
+	} else {
+		createdAt, err = h.parseTime(createdAtStr)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "incorrect time format"})
+			return
+		}
+	}
+
 	metadata := c.PostForm("metadata")
 	fileName := fileHeader.Filename
 
@@ -89,7 +89,7 @@ func (h *ControllerHandler) DownloadHandler(c *gin.Context) {
 	fileIDStr := c.Param("id")
 
 	if fileIDStr == "" {
-		c.String(http.StatusBadRequest, "X-File-ID header is required")
+		c.String(http.StatusBadRequest, "ID файла не указан в запросе")
 		return
 	}
 
@@ -129,7 +129,11 @@ func (h *ControllerHandler) DownloadHandler(c *gin.Context) {
 		c.String(http.StatusInternalServerError, "Failed to write meta field: %v", err)
 		return
 	}
-	_ = mw.WriteField("updated_at", updatedAt.String())
+	err = mw.WriteField("updated_at", updatedAt.String())
+	if err != nil {
+		c.String(http.StatusInternalServerError, "Failed to write date field: %v", err)
+		return
+	}
 
 	c.Header("Content-Type", mw.FormDataContentType())
 	c.Header("Content-Length", fmt.Sprint(buf.Len()))
@@ -144,45 +148,105 @@ func (h *ControllerHandler) DownloadHandler(c *gin.Context) {
 
 func (h *ControllerHandler) UpdateHandler(c *gin.Context) {
 
-	fileName := c.GetHeader("X-Filename")
-	fileIDStr := c.GetHeader("X-File-ID")
-	metadata := c.GetHeader("X-Meta")
+	// fileName := c.GetHeader("X-Filename")
+	// fileIDStr := c.GetHeader("X-File-ID")
+	// metadata := c.GetHeader("X-Meta")
+	// userID := c.GetInt("user_id")
+
+	// var updatedAt time.Time
+	// updatedAtStr := c.GetHeader("X-Updated-At")
+	// updatedAt, err := h.parseTime(updatedAtStr)
+	// if err != nil {
+	// 	c.JSON(http.StatusBadRequest, gin.H{"error": "incorrect time format"})
+	// 	return
+	// }
+
+	// if fileName == "" {
+	// 	c.String(http.StatusBadRequest, "X-Filename header is required")
+	// 	return
+	// }
+
+	// if fileIDStr == "" {
+	// 	c.String(http.StatusBadRequest, "X-File-ID header is required")
+	// 	return
+	// }
+
+	// fileID, err := uuid.Parse(fileIDStr)
+	// if err != nil {
+	// 	log.Print(err)
+	// 	c.JSON(http.StatusBadRequest, gin.H{"error": err})
+	// 	return
+	// }
+
+	// data, err := io.ReadAll(c.Request.Body)
+	// if err != nil {
+	// 	c.String(http.StatusInternalServerError, "Failed to read body: %v", err)
+	// 	return
+	// }
+
+	// err = h.service.Update(c.Request.Context(), fileID, userID, data, fileName, metadata, updatedAt)
+	// if err != nil {
+	// 	c.String(http.StatusInternalServerError, "Failed to update data: %v", err)
+	// 	return
+	// }
+
 	userID := c.GetInt("user_id")
+	var err error
+
+	file, fileHeader, err := c.Request.FormFile("file")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "file is required"})
+		return
+	}
+	defer file.Close()
+
+	if fileHeader.Size == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "file is empty"})
+		return
+	}
+
+	if fileHeader.Size > maxFileSize {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "размер файл преавышает 2 ГБ"})
+		return
+	}
+
+	data, err := io.ReadAll(file)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read file"})
+		return
+	}
 
 	var updatedAt time.Time
-	updatedAtStr := c.GetHeader("X-Updated-At")
-	updatedAt, err := h.parseTime(updatedAtStr)
+	updatedAtStr := c.PostForm("updated_at")
+	updatedAt, err = h.parseTime(updatedAtStr)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "incorrect time format"})
 		return
 	}
 
-	if fileName == "" {
-		c.String(http.StatusBadRequest, "X-Filename header is required")
-		return
-	}
+	metadata := c.PostForm("metadata")
+	fileName := fileHeader.Filename
 
-	if fileIDStr == "" {
-		c.String(http.StatusBadRequest, "X-File-ID header is required")
-		return
-	}
-
-	fileID, err := uuid.Parse(fileIDStr)
-	if err != nil {
+	idStr := c.PostForm("file_id")
+	if idStr == "" {
+		err = fmt.Errorf("ID файла не заполнено")
 		log.Print(err)
-		c.JSON(http.StatusBadRequest, gin.H{"error": err})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "file ID is empty"})
 		return
 	}
 
-	data, err := io.ReadAll(c.Request.Body)
+	id, err := uuid.Parse(idStr)
 	if err != nil {
-		c.String(http.StatusInternalServerError, "Failed to read body: %v", err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "incorrect file id format"})
 		return
 	}
 
-	err = h.service.Update(c.Request.Context(), fileID, userID, data, fileName, metadata, updatedAt)
+	err = h.service.Update(c.Request.Context(), id, userID, data, fileName, metadata, updatedAt)
+
 	if err != nil {
-		c.String(http.StatusInternalServerError, "Failed to update data: %v", err)
+		err = fmt.Errorf("[UpdateHandler]: failed to save data: %w", err)
+		log.Print(err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err})
 		return
 	}
 
@@ -255,12 +319,10 @@ func (h *ControllerHandler) SyncHandler(c *gin.Context) {
 
 func (h *ControllerHandler) parseTime(str string) (t time.Time, err error) {
 
-	layout := "2006-01-02 15:04:05.999999999 -0700 MST"
-
 	if str == "" {
 		return time.Now(), nil
 	}
-	t, err = time.Parse(layout, str)
+	t, err = time.Parse(time.RFC3339Nano, str)
 	if err != nil {
 		return
 	}

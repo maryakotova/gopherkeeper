@@ -1,79 +1,61 @@
 package cmd
 
 import (
-	"bytes"
+	"GophKeeper/client/internal/api"
+	contextutils "GophKeeper/client/internal/context_utils"
+	"GophKeeper/client/internal/storage"
 	"fmt"
-	"io"
-	"mime/multipart"
-	"net/http"
-	"os"
-	"path/filepath"
 
 	"github.com/spf13/cobra"
+
+	_ "github.com/jackc/pgconn"
+	_ "github.com/jackc/pgerrcode"
+	_ "github.com/jackc/pgx/v4/stdlib"
 )
+
+var addFilePath, addMetadata string
 
 var addCmd = &cobra.Command{
 	Use:   "add",
-	Short: "Добавить новую запись из файла",
-	Run: func(cmd *cobra.Command, args []string) {
-		filePath, _ := cmd.Flags().GetString("file")
-		if filePath == "" {
-			fmt.Println("Пожалуйста, укажите путь к файлу через --file")
-			return
-		}
+	Short: "Добавить новый файл",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		var err error
 
-		token := getToken()
-
-		file, err := os.Open(filePath)
+		ctx := cmd.Context()
+		serverAddr, err := contextutils.GetServerAddr(ctx)
 		if err != nil {
-			fmt.Println("Ошибка открытия файла:", err)
-			return
+			return err
 		}
-		defer file.Close()
 
-		var body bytes.Buffer
-		writer := multipart.NewWriter(&body)
-
-		part, err := writer.CreateFormFile("file", filepath.Base(filePath))
+		dbDSN, err := contextutils.GetDatabaseURL(ctx)
 		if err != nil {
-			fmt.Println("Ошибка создания multipart части:", err)
-			return
+			return err
 		}
 
-		if _, err := io.Copy(part, file); err != nil {
-			fmt.Println("Ошибка копирования файла в multipart:", err)
-			return
-		}
-
-		writer.Close()
-
-		req, err := http.NewRequest("POST", Config.RunAddress+"/data/upload", &body)
+		factory := &storage.StorageFactory{}
+		storage, err := factory.NewStorage(dbDSN)
 		if err != nil {
-			fmt.Println("Ошибка создания запроса:", err)
-			return
+			return err
 		}
 
-		req.Header.Set("Authorization", "Bearer "+token)
-		req.Header.Set("Content-Type", writer.FormDataContentType())
+		if addFilePath == "" {
+			err = fmt.Errorf("пожалуйста, укажите путь к файлу через --path")
+			return err
+		}
 
-		client := &http.Client{}
-		resp, err := client.Do(req)
+		client := api.NewClient(storage, serverAddr)
+		err = client.AddFile(ctx, addFilePath, addMetadata)
 		if err != nil {
-			fmt.Println("Ошибка запроса:", err)
-			return
+			return err
 		}
-		defer resp.Body.Close()
 
-		if resp.StatusCode == http.StatusCreated {
-			fmt.Println("Файл успешно загружен!")
-		} else {
-			b, _ := io.ReadAll(resp.Body)
-			fmt.Printf("Ошибка загрузки файла: %s\n", string(b))
-		}
+		return nil
 	},
 }
 
 func init() {
+	addCmd.Flags().StringVar(&addFilePath, "path", "", "Путь к файлу для загрузки")
+	addCmd.Flags().StringVar(&addMetadata, "meta", "", "Метаданные для файла")
+	addCmd.MarkFlagRequired("file")
 	rootCmd.AddCommand(addCmd)
-	addCmd.Flags().String("file", "", "Путь к файлу для загрузки")
 }

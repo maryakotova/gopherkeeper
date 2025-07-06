@@ -1,58 +1,47 @@
 package cmd
 
 import (
-	"bytes"
-	"encoding/json"
+	"GophKeeper/client/internal/api"
+	contextutils "GophKeeper/client/internal/context_utils"
 	"fmt"
-	"io"
-	"net/http"
 
 	"github.com/spf13/cobra"
 )
 
-var authToken string
+var loginUsername, loginPassword string
 
 var loginCmd = &cobra.Command{
 	Use:   "login",
 	Short: "Аутентификация пользователя",
-	Run: func(cmd *cobra.Command, args []string) {
-		login, _ := cmd.Flags().GetString("login")
-		password, _ := cmd.Flags().GetString("password")
+	RunE: func(cmd *cobra.Command, args []string) error {
 
-		if login == "" || password == "" {
-			fmt.Println("Пожалуйста, укажите --login и --password")
-			return
-		}
-
-		data := map[string]string{"login": login, "password": password}
-		body, _ := json.Marshal(data)
-
-		resp, err := http.Post(Config.RunAddress+"/api/login", "application/json", bytes.NewReader(body))
+		ctx := cmd.Context()
+		serverAddr, err := contextutils.GetServerAddr(ctx)
 		if err != nil {
-			fmt.Println("Ошибка запроса:", err)
-			return
+			return err
 		}
-		defer resp.Body.Close()
 
-		if resp.StatusCode == http.StatusOK {
-			var respData map[string]string
-			if err := json.NewDecoder(resp.Body).Decode(&respData); err == nil {
-				Token = respData["token"]
-				fmt.Println("Вход выполнен успешно!")
-				// TODO: Сохраняем токен в файл для дальнейшего использования
-			} else {
-				fmt.Println("Не удалось получить токен")
-			}
-		} else {
-			b, _ := io.ReadAll(resp.Body)
-			fmt.Println("Ошибка входа:", string(b))
+		client := api.NewClient(nil, serverAddr)
+		token, err := client.Login(ctx, loginUsername, loginPassword)
+		if err != nil {
+			return fmt.Errorf("ошибка входа: %w", err)
 		}
+
+		err = contextutils.SaveTokenToFile(ctx, token)
+		if err != nil {
+			return fmt.Errorf("вход выполнен, но не удалось сохранить токен: %w", err)
+		}
+
+		fmt.Println("🔓 Вход выполнен успешно")
+		return nil
+
 	},
 }
 
 func init() {
+	loginCmd.Flags().StringVar(&loginUsername, "username", "", "Имя пользователя")
+	loginCmd.Flags().StringVar(&loginPassword, "password", "", "Пароль")
+	loginCmd.MarkFlagRequired("login")
+	loginCmd.MarkFlagRequired("password")
 	rootCmd.AddCommand(loginCmd)
-
-	loginCmd.Flags().String("login", "", "Логин пользователя")
-	loginCmd.Flags().String("password", "", "Пароль пользователя")
 }

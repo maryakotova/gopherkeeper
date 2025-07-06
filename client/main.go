@@ -2,16 +2,14 @@ package main
 
 import (
 	"GophKeeper/client/cmd"
-	"GophKeeper/client/internal/config"
 	"fmt"
 	"os"
 )
 
 func main() {
 
-	config := config.NewConfig()
-
-	cmd.Config = *config
+	// cfg := config.NewConfig()
+	// cmd.Config = *cfg
 
 	if err := cmd.Execute(); err != nil {
 		fmt.Println(err)

@@ -108,7 +108,7 @@ func (s *PostgresStorage) CreateUser(ctx context.Context, login string, hashedPa
 	return
 }
 
-func (s *PostgresStorage) CLose() error {
+func (s *PostgresStorage) Close() error {
 	return s.db.Close()
 }
 
@@ -130,7 +130,7 @@ func (s *PostgresStorage) GetUserAuthData(ctx context.Context, login string) (us
 	return
 }
 
-func (s *PostgresStorage) InsertData(ctx context.Context, userID int, data []byte, fileName string, metadata string, createddAt time.Time) (id uuid.UUID, err error) {
+func (s *PostgresStorage) InsertData(ctx context.Context, userID int, data []byte, fileName string, metadata string, createdAt time.Time) (id uuid.UUID, err error) {
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -150,7 +150,7 @@ func (s *PostgresStorage) InsertData(ctx context.Context, userID int, data []byt
 	`
 
 	s.mtx.Lock()
-	err = tx.QueryRowContext(ctx, insertFileQuery, userID, fileName, metadata, createddAt, createddAt).Scan(&id)
+	err = tx.QueryRowContext(ctx, insertFileQuery, userID, fileName, metadata, createdAt, createdAt).Scan(&id)
 	if err == nil {
 		_, err = tx.ExecContext(ctx, insertContentQuery, id, data)
 	}
@@ -295,7 +295,7 @@ func (s *PostgresStorage) GetDataByFileID(ctx context.Context, fileID uuid.UUID,
 			FROM files f
 			INNER JOIN content c 
 				ON f.id = c.id
-			WHERE id = $1
+			WHERE f.id = $1
 			AND user_id = $2;
 	`
 

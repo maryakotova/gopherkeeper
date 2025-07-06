@@ -14,13 +14,12 @@ import (
 	_ "github.com/jackc/pgx/v4/stdlib"
 )
 
-var getFileID string
+var updateFilePath, updateMetadata, updateFileID string
 
-var getCmd = &cobra.Command{
-	Use:   "get",
-	Short: "Скачать файл с сервера",
+var updateCmd = &cobra.Command{
+	Use:   "update",
+	Short: "Обновить существующий файл",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		var err error
 
 		ctx := cmd.Context()
 		serverAddr, err := contextutils.GetServerAddr(ctx)
@@ -39,19 +38,24 @@ var getCmd = &cobra.Command{
 			return err
 		}
 
+		if updateFilePath == "" {
+			err = fmt.Errorf("пожалуйста, укажите путь к файлу через --path")
+			return err
+		}
+
 		var fileID uuid.UUID
-		if getFileID == "" {
+		if updateFileID == "" {
 			err = fmt.Errorf("пожалуйста, укажите ID файла через --id")
 			return err
 		} else {
-			fileID, err = uuid.Parse(getFileID)
+			fileID, err = uuid.Parse(updateFileID)
 			if err != nil {
 				return fmt.Errorf("неверный формат ID файла: %w", err)
 			}
 		}
 
 		client := api.NewClient(storage, serverAddr)
-		err = client.GetFile(ctx, fileID)
+		err = client.UpdateFile(ctx, fileID, updateFilePath, updateMetadata)
 		if err != nil {
 			return err
 		}
@@ -61,7 +65,10 @@ var getCmd = &cobra.Command{
 }
 
 func init() {
-	rootCmd.AddCommand(getCmd)
-	getCmd.Flags().StringVar(&getFileID, "id", "", "ID файла для загрузки")
-	getCmd.MarkFlagRequired("id")
+	updateCmd.Flags().StringVar(&updateFilePath, "path", "", "Путь к файлу для загрузки")
+	updateCmd.Flags().StringVar(&updateMetadata, "meta", "", "Метаданные для файла")
+	updateCmd.Flags().StringVar(&updateFileID, "id", "", "ID файла для обновления")
+	updateCmd.MarkFlagRequired("path")
+	updateCmd.MarkFlagRequired("id")
+	rootCmd.AddCommand(updateCmd)
 }

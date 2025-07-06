@@ -12,7 +12,7 @@ import (
 type Repository interface {
 	CreateUser(ctx context.Context, login string, hashedPassword string) (userID int, err error)
 	GetUserAuthData(ctx context.Context, login string) (userID int, hashedPassword string, err error)
-	CLose() error
+	Close() error
 	Bootstrap(ctx context.Context) error
 	InsertData(ctx context.Context, userID int, data []byte, fileName string, metadata string, createddAt time.Time) (id uuid.UUID, err error)
 	DeleteData(ctx context.Context, fileID uuid.UUID, userID int) error
